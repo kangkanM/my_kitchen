@@ -1,0 +1,45 @@
+from flask import Flask, request, jsonify
+import requests
+
+app = Flask(__name__)
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+@app.route('/generate', methods=['POST'])
+def generate_text():
+    data = request.get_json()
+    if not data or 'model' not in data or 'prompt' not in data:
+        return jsonify({"error": "Missing 'model' or 'prompt' in request body"}), 400
+
+    model_name = data['model']
+    prompt = data['prompt']
+    stream = data.get('stream', False)  # Optional stream parameter
+
+    ollama_payload = {
+        "model": model_name,
+        "prompt": prompt,
+        "stream": stream
+    }
+
+    try:
+        ollama_response = requests.post(OLLAMA_URL, headers={'Content-Type': 'application/json'}, json=ollama_payload, stream=stream)
+        ollama_response.raise_for_status()
+
+        if stream:
+            def generate():
+                for line in ollama_response.iter_lines():
+                    if line:
+                        try:
+                            json_data = json.loads(line.decode('utf-8'))
+                            yield json.dumps(json_data) + '\n'
+                        except json.JSONDecodeError:
+                            print(f"Error decoding JSON: {line}")
+                            continue
+            return app.response_class(generate(), mimetype='application/x-ndjson')
+        else:
+            return jsonify(ollama_response.json())
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Error communicating with Ollama: {e}"}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
